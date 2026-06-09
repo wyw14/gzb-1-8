@@ -526,14 +526,21 @@ app.get('/api/custody', (req, res) => {
 });
 
 app.post('/api/custody', (req, res) => {
+  const { startDate, endDate, caretaker, contact } = req.body;
+  if (!startDate || !endDate || !caretaker || !contact) {
+    return res.status(400).json({ error: '开始日期、结束日期、照看人和联系方式为必填项' });
+  }
+  if (new Date(endDate) < new Date(startDate)) {
+    return res.status(400).json({ error: '结束日期不能早于开始日期' });
+  }
   const records = readJSON('custody-records.json');
   const now = new Date().toISOString();
   const newRecord = {
     id: generateId(),
-    startDate: req.body.startDate,
-    endDate: req.body.endDate,
-    caretaker: req.body.caretaker,
-    contact: req.body.contact || '',
+    startDate,
+    endDate,
+    caretaker,
+    contact: contact || '',
     notes: req.body.notes || '',
     status: 'active',
     createdAt: now
@@ -548,6 +555,11 @@ app.put('/api/custody/:id', (req, res) => {
   const index = records.findIndex(r => r.id === req.params.id);
   if (index === -1) {
     return res.status(404).json({ error: '托管记录不存在' });
+  }
+  const startDate = req.body.startDate || records[index].startDate;
+  const endDate = req.body.endDate || records[index].endDate;
+  if (new Date(endDate) < new Date(startDate)) {
+    return res.status(400).json({ error: '结束日期不能早于开始日期' });
   }
   records[index] = { ...records[index], ...req.body, updatedAt: new Date().toISOString() };
   writeJSON('custody-records.json', records);

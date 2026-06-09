@@ -1764,9 +1764,27 @@ const CustodyMode = {
       notes: ''
     });
 
+    const validateEndDate = (rule, value, callback) => {
+      if (!value) {
+        callback(new Error('请选择结束日期'));
+      } else if (formData.startDate && new Date(value) < new Date(formData.startDate)) {
+        callback(new Error('结束日期不能早于开始日期'));
+      } else {
+        callback();
+      }
+    };
+
+    const custodyFormRef = ref(null);
+
+    watch(() => formData.startDate, () => {
+      if (formData.endDate && custodyFormRef.value) {
+        custodyFormRef.value.validateField('endDate');
+      }
+    });
+
     const rules = {
       startDate: [{ required: true, message: '请选择开始日期', trigger: 'change' }],
-      endDate: [{ required: true, message: '请选择结束日期', trigger: 'change' }],
+      endDate: [{ required: true, validator: validateEndDate, trigger: 'change' }],
       caretaker: [{ required: true, message: '请输入照看人姓名', trigger: 'blur' }],
       contact: [{ required: true, message: '请输入联系方式', trigger: 'blur' }]
     };
@@ -1808,9 +1826,9 @@ const CustodyMode = {
       dialogVisible.value = true;
     };
 
-    const handleSubmit = async (formRef) => {
-      if (!formRef) return;
-      await formRef.validate(async (valid) => {
+    const handleSubmit = async () => {
+      if (!custodyFormRef.value) return;
+      await custodyFormRef.value.validate(async (valid) => {
         if (valid) {
           try {
             const submitData = { ...formData };
@@ -1940,6 +1958,7 @@ const CustodyMode = {
       currentRecord,
       formData,
       rules,
+      custodyFormRef,
       printChecklistRef,
       openAddDialog,
       openEditDialog,
@@ -2058,7 +2077,7 @@ const CustodyMode = {
           :closable="false"
           style="margin-bottom: 20px;"
         />
-        <el-form ref="custodyFormRef" :model="formData" :rules="rules" label-width="110px">
+        <el-form :ref="el => custodyFormRef = el" :model="formData" :rules="rules" label-width="110px">
           <el-form-item label="开始日期" prop="startDate">
             <el-date-picker v-model="formData.startDate" type="date" placeholder="选择出差开始日期" style="width: 100%;" />
           </el-form-item>
@@ -2077,7 +2096,7 @@ const CustodyMode = {
         </el-form>
         <template #footer>
           <el-button @click="dialogVisible = false">取消</el-button>
-          <el-button type="primary" @click="handleSubmit($refs.custodyFormRef)">{{ isEdit ? '保存' : '开启托管' }}</el-button>
+          <el-button type="primary" @click="handleSubmit()">{{ isEdit ? '保存' : '开启托管' }}</el-button>
         </template>
       </el-dialog>
 

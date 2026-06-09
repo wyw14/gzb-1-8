@@ -518,6 +518,132 @@ app.get('/api/report/yearly', (req, res) => {
   res.json(report);
 });
 
+app.get('/api/custody', (req, res) => {
+  const records = readJSON('custody-records.json');
+  const active = records.filter(r => r.status === 'active').sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const history = records.filter(r => r.status !== 'active').sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  res.json({ active, history, all: records });
+});
+
+app.post('/api/custody', (req, res) => {
+  const records = readJSON('custody-records.json');
+  const now = new Date().toISOString();
+  const newRecord = {
+    id: generateId(),
+    startDate: req.body.startDate,
+    endDate: req.body.endDate,
+    caretaker: req.body.caretaker,
+    contact: req.body.contact || '',
+    notes: req.body.notes || '',
+    status: 'active',
+    createdAt: now
+  };
+  records.push(newRecord);
+  writeJSON('custody-records.json', records);
+  res.json(newRecord);
+});
+
+app.put('/api/custody/:id', (req, res) => {
+  const records = readJSON('custody-records.json');
+  const index = records.findIndex(r => r.id === req.params.id);
+  if (index === -1) {
+    return res.status(404).json({ error: '托管记录不存在' });
+  }
+  records[index] = { ...records[index], ...req.body, updatedAt: new Date().toISOString() };
+  writeJSON('custody-records.json', records);
+  res.json(records[index]);
+});
+
+app.delete('/api/custody/:id', (req, res) => {
+  let records = readJSON('custody-records.json');
+  records = records.filter(r => r.id !== req.params.id);
+  writeJSON('custody-records.json', records);
+  res.json({ message: '删除成功' });
+});
+
+app.get('/api/custody/:id/checklist', (req, res) => {
+  const records = readJSON('custody-records.json');
+  const record = records.find(r => r.id === req.params.id);
+  if (!record) {
+    return res.status(404).json({ error: '托管记录不存在' });
+  }
+  const plants = readJSON('plants.json');
+  const startDate = new Date(record.startDate);
+  const endDate = new Date(record.endDate);
+  const days = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24)) + 1;
+
+  const tasks = [];
+  plants.forEach(plant => {
+    const nextCare = calculateNextCare(plant);
+    let waterDate = new Date(plant.lastWatering || plant.createdAt || new Date());
+    let fertDate = new Date(plant.lastFertilizing || plant.createdAt || new Date());
+    const waterCycle = plant.wateringCycle || 7;
+    const fertCycle = plant.fertilizingCycle || 30;
+
+    const waterNext = new Date(waterDate.getTime() + waterCycle * 24 * 60 * 60 * 1000);
+    let d = new Date(Math.max(waterNext.getTime(), startDate.getTime()));
+    while (d <= endDate) {
+      tasks.push({
+        plantId: plant.id,
+        plantName: plant.name,
+        species: plant.species,
+        type: 'watering',
+        typeLabel: '浇水',
+        date: new Date(d).toISOString(),
+        difficulty: plant.difficulty,
+        lightPreference: plant.lightPreference,
+        notes: plant.notes || ''
+      });
+      d = new Date(d.getTime() + waterCycle * 24 * 60 * 60 * 1000);
+    }
+
+    const fertNext = new Date(fertDate.getTime() + fertCycle * 24 * 60 * 60 * 1000);
+    d = new Date(Math.max(fertNext.getTime(), startDate.getTime()));
+    while (d <= endDate) {
+      tasks.push({
+        plantId: plant.id,
+        plantName: plant.name,
+        species: plant.species,
+        type: 'fertilizing',
+        typeLabel: '施肥',
+        date: new Date(d).toISOString(),
+        difficulty: plant.difficulty,
+        lightPreference: plant.lightPreference,
+        notes: plant.notes || ''
+      });
+      d = new Date(d.getTime() + fertCycle * 24 * 60 * 60 * 1000);
+    }
+  });
+
+  tasks.sort((a, b) => new Date(a.date) - new Date(b.date));
+
+  const groupedByDate = {};
+  tasks.forEach(task => {
+    const dayKey = new Date(task.date).toISOString().split('T')[0];
+    if (!groupedByDate[dayKey]) {
+      groupedByDate[dayKey] = { date: dayKey, tasks: [] };
+    }
+    groupedByDate[dayKey].tasks.push(task);
+  });
+
+  const dateGroups = Object.values(groupedByDate).sort((a, b) => new Date(a.date) - new Date(b.date));
+
+  const summary = {
+    totalTasks: tasks.length,
+    wateringCount: tasks.filter(t => t.type === 'watering').length,
+    fertilizingCount: tasks.filter(t => t.type === 'fertilizing').length,
+    plantCount: plants.length,
+    days: days
+  };
+
+  res.json({
+    custody: record,
+    summary,
+    dateGroups,
+    allTasks: tasks
+  });
+});
+
 app.get('/api/notifications', (req, res) => {
   const plants = readJSON('plants.json');
   const now = new Date();

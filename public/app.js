@@ -80,6 +80,34 @@ const api = {
   async getYearlyReportData(year) {
     const res = await fetch(`${API_BASE}/api/report/yearly?year=${year}`);
     return res.json();
+  },
+  async getCustodyRecords() {
+    const res = await fetch(`${API_BASE}/api/custody`);
+    return res.json();
+  },
+  async createCustody(data) {
+    const res = await fetch(`${API_BASE}/api/custody`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    return res.json();
+  },
+  async updateCustody(id, data) {
+    const res = await fetch(`${API_BASE}/api/custody/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    return res.json();
+  },
+  async deleteCustody(id) {
+    const res = await fetch(`${API_BASE}/api/custody/${id}`, { method: 'DELETE' });
+    return res.json();
+  },
+  async getCustodyChecklist(id) {
+    const res = await fetch(`${API_BASE}/api/custody/${id}/checklist`);
+    return res.json();
   }
 };
 
@@ -256,6 +284,12 @@ const App = {
             </a>
           </li>
           <li>
+            <a @click="navigate('custody')" :class="{ active: currentRoute === 'custody' }">
+              <el-icon><Suitcase /></el-icon>
+              <span>托管模式</span>
+            </a>
+          </li>
+          <li>
             <a @click="navigate('report')" :class="{ active: currentRoute === 'report' }">
               <el-icon><Document /></el-icon>
               <span>年度报告</span>
@@ -275,6 +309,7 @@ const App = {
         <notification-page v-else-if="currentRoute === 'notifications'" :notifications="notifications" @refresh="loadNotifications" />
         <photo-timeline v-else-if="currentRoute === 'photos'" />
         <pest-detection v-else-if="currentRoute === 'pests'" />
+        <custody-mode v-else-if="currentRoute === 'custody'" />
         <yearly-report v-else-if="currentRoute === 'report'" />
       </main>
     </div>
@@ -1709,6 +1744,461 @@ const YearlyReport = {
   `
 };
 
+const CustodyMode = {
+  setup() {
+    const custodyRecords = ref({ active: [], history: [], all: [] });
+    const loading = ref(false);
+    const dialogVisible = ref(false);
+    const checklistVisible = ref(false);
+    const checklistData = ref(null);
+    const checklistLoading = ref(false);
+    const isEdit = ref(false);
+    const currentRecord = ref(null);
+    const printChecklistRef = ref(null);
+
+    const formData = reactive({
+      startDate: '',
+      endDate: '',
+      caretaker: '',
+      contact: '',
+      notes: ''
+    });
+
+    const rules = {
+      startDate: [{ required: true, message: '请选择开始日期', trigger: 'change' }],
+      endDate: [{ required: true, message: '请选择结束日期', trigger: 'change' }],
+      caretaker: [{ required: true, message: '请输入照看人姓名', trigger: 'blur' }],
+      contact: [{ required: true, message: '请输入联系方式', trigger: 'blur' }]
+    };
+
+    const loadRecords = async () => {
+      try {
+        loading.value = true;
+        custodyRecords.value = await api.getCustodyRecords();
+      } catch (e) {
+        ElMessage.error('加载托管记录失败');
+      } finally {
+        loading.value = false;
+      }
+    };
+
+    const openAddDialog = () => {
+      isEdit.value = false;
+      currentRecord.value = null;
+      Object.assign(formData, {
+        startDate: '',
+        endDate: '',
+        caretaker: '',
+        contact: '',
+        notes: ''
+      });
+      dialogVisible.value = true;
+    };
+
+    const openEditDialog = (record) => {
+      isEdit.value = true;
+      currentRecord.value = record;
+      Object.assign(formData, {
+        startDate: record.startDate ? record.startDate.split('T')[0] : '',
+        endDate: record.endDate ? record.endDate.split('T')[0] : '',
+        caretaker: record.caretaker,
+        contact: record.contact,
+        notes: record.notes || ''
+      });
+      dialogVisible.value = true;
+    };
+
+    const handleSubmit = async (formRef) => {
+      if (!formRef) return;
+      await formRef.validate(async (valid) => {
+        if (valid) {
+          try {
+            const submitData = { ...formData };
+            if (submitData.startDate) submitData.startDate = new Date(submitData.startDate).toISOString();
+            if (submitData.endDate) submitData.endDate = new Date(submitData.endDate).toISOString();
+
+            if (isEdit.value) {
+              await api.updateCustody(currentRecord.value.id, submitData);
+              ElMessage.success('托管记录更新成功');
+            } else {
+              await api.createCustody(submitData);
+              ElMessage.success('托管模式已开启');
+            }
+            dialogVisible.value = false;
+            loadRecords();
+          } catch (e) {
+            ElMessage.error('保存失败');
+          }
+        }
+      });
+    };
+
+    const endCustody = async (record) => {
+      try {
+        await ElMessageBox.confirm('确定要结束此托管吗？', '确认结束', { type: 'warning' });
+        await api.updateCustody(record.id, { status: 'completed' });
+        ElMessage.success('托管已结束');
+        loadRecords();
+      } catch (e) {
+        if (e !== 'cancel') ElMessage.error('操作失败');
+      }
+    };
+
+    const handleDelete = async (record) => {
+      try {
+        await ElMessageBox.confirm('确定要删除此托管记录吗？', '确认删除', { type: 'warning' });
+        await api.deleteCustody(record.id);
+        ElMessage.success('删除成功');
+        loadRecords();
+      } catch (e) {
+        if (e !== 'cancel') ElMessage.error('删除失败');
+      }
+    };
+
+    const openChecklist = async (record) => {
+      try {
+        checklistLoading.value = true;
+        checklistVisible.value = true;
+        checklistData.value = await api.getCustodyChecklist(record.id);
+      } catch (e) {
+        ElMessage.error('加载清单失败');
+      } finally {
+        checklistLoading.value = false;
+      }
+    };
+
+    const printChecklist = () => {
+      const printContent = document.getElementById('custody-checklist-print');
+      if (!printContent) return;
+      const printWindow = window.open('', '_blank');
+      printWindow.document.write(`
+        <!DOCTYPE html>
+        <html lang="zh-CN">
+        <head>
+          <meta charset="UTF-8">
+          <title>托管养护清单</title>
+          <style>
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            body { font-family: 'Microsoft YaHei', sans-serif; padding: 40px; color: #333; }
+            h1 { text-align: center; color: #2e7d32; margin-bottom: 8px; font-size: 24px; }
+            .subtitle { text-align: center; color: #666; font-size: 14px; margin-bottom: 24px; }
+            .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 24px; padding: 16px; background: #f5f5f5; border-radius: 8px; }
+            .info-item { font-size: 14px; }
+            .info-label { color: #666; margin-right: 8px; }
+            .info-value { color: #333; font-weight: bold; }
+            .summary { display: flex; gap: 24px; margin-bottom: 24px; padding: 16px; background: #e8f5e9; border-radius: 8px; }
+            .summary-item { text-align: center; flex: 1; }
+            .summary-value { font-size: 24px; font-weight: bold; color: #2e7d32; }
+            .summary-label { font-size: 12px; color: #666; margin-top: 4px; }
+            .day-group { margin-bottom: 20px; page-break-inside: avoid; }
+            .day-header { font-size: 16px; font-weight: bold; color: #2e7d32; padding: 8px 12px; background: #c8e6c9; border-radius: 6px; margin-bottom: 8px; }
+            table { width: 100%; border-collapse: collapse; font-size: 13px; }
+            th { background: #f5f5f5; padding: 8px; text-align: left; border: 1px solid #ddd; }
+            td { padding: 8px; border: 1px solid #ddd; }
+            .check-col { width: 40px; text-align: center; }
+            .type-water { color: #1976d2; }
+            .type-fert { color: #f57c00; }
+            .footer { margin-top: 32px; padding-top: 16px; border-top: 2px solid #e0e0e0; font-size: 13px; color: #666; }
+            .sign-area { display: flex; gap: 40px; margin-top: 24px; }
+            .sign-item { flex: 1; }
+            .sign-line { border-bottom: 1px solid #333; margin-top: 40px; margin-bottom: 8px; }
+            @media print { body { padding: 20px; } }
+          </style>
+        </head>
+        <body>
+          ${printContent.innerHTML}
+          <script>window.onload=function(){window.print();}<\/script>
+        </body>
+        </html>
+      `);
+      printWindow.document.close();
+    };
+
+    const getWeekday = (dateStr) => {
+      const days = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+      return days[new Date(dateStr).getDay()];
+    };
+
+    const formatDateShort = (dateStr) => {
+      if (!dateStr) return '';
+      const d = new Date(dateStr);
+      return `${d.getMonth() + 1}月${d.getDate()}日`;
+    };
+
+    onMounted(() => {
+      loadRecords();
+    });
+
+    return {
+      custodyRecords,
+      loading,
+      dialogVisible,
+      checklistVisible,
+      checklistData,
+      checklistLoading,
+      isEdit,
+      currentRecord,
+      formData,
+      rules,
+      printChecklistRef,
+      openAddDialog,
+      openEditDialog,
+      handleSubmit,
+      endCustody,
+      handleDelete,
+      openChecklist,
+      printChecklist,
+      getWeekday,
+      formatDateShort,
+      formatDate,
+      difficultyOptions,
+      lightOptions
+    };
+  },
+  template: `
+    <div>
+      <div class="page-header">
+        <h1 class="page-title">🧳 托管模式</h1>
+        <div class="page-header-actions">
+          <el-button type="primary" @click="openAddDialog">
+            <el-icon><Plus /></el-icon> 开启托管
+          </el-button>
+        </div>
+      </div>
+
+      <el-alert
+        v-if="custodyRecords.active.length > 0"
+        :title="'当前有 ' + custodyRecords.active.length + ' 个托管正在进行中'"
+        type="warning"
+        :closable="false"
+        style="margin-bottom: 20px;"
+      >
+        <template #default>
+          <span>出差期间，照看人可按清单执行养护任务，确保植物健康成长。</span>
+        </template>
+      </el-alert>
+
+      <div v-loading="loading">
+        <div v-if="custodyRecords.active.length === 0 && custodyRecords.history.length === 0" class="empty-state">
+          <div class="empty-state-icon">🧳</div>
+          <div class="empty-state-text">暂无托管记录，出差前开启托管模式，确保植物有人照看</div>
+          <el-button type="primary" @click="openAddDialog">立即开启</el-button>
+        </div>
+
+        <div v-if="custodyRecords.active.length > 0" style="margin-bottom: 32px;">
+          <h3 style="margin-bottom: 16px; color: #e65100; font-size: 18px;">
+            🔥 进行中的托管 ({{ custodyRecords.active.length }})
+          </h3>
+          <el-row :gutter="20">
+            <el-col v-for="record in custodyRecords.active" :key="record.id" :xs="24" :sm="12" :lg="8" style="margin-bottom: 20px;">
+              <div class="custody-card active">
+                <div class="custody-card-header">
+                  <div class="custody-card-status-badge active">进行中</div>
+                  <div class="custody-card-caretaker">{{ record.caretaker }}</div>
+                </div>
+                <div class="custody-card-body">
+                  <div class="custody-card-info-row">
+                    <span class="custody-card-label">📅 托管期间</span>
+                    <span class="custody-card-value">{{ formatDateShort(record.startDate) }} ~ {{ formatDateShort(record.endDate) }}</span>
+                  </div>
+                  <div class="custody-card-info-row">
+                    <span class="custody-card-label">📞 联系方式</span>
+                    <span class="custody-card-value">{{ record.contact }}</span>
+                  </div>
+                  <div v-if="record.notes" class="custody-card-info-row">
+                    <span class="custody-card-label">📝 交接备注</span>
+                    <span class="custody-card-value">{{ record.notes }}</span>
+                  </div>
+                </div>
+                <div class="custody-card-actions">
+                  <el-button type="primary" size="small" @click="openChecklist(record)">📋 查看清单</el-button>
+                  <el-button type="warning" size="small" @click="openEditDialog(record)">✏️ 编辑</el-button>
+                  <el-button type="danger" size="small" @click="endCustody(record)">⏹️ 结束</el-button>
+                </div>
+              </div>
+            </el-col>
+          </el-row>
+        </div>
+
+        <div v-if="custodyRecords.history.length > 0">
+          <h3 style="margin-bottom: 16px; color: #666; font-size: 18px;">
+            📚 历史托管记录 ({{ custodyRecords.history.length }})
+          </h3>
+          <el-table :data="custodyRecords.history" style="width: 100%" border>
+            <el-table-column label="托管期间" min-width="200">
+              <template #default="{ row }">
+                {{ formatDateShort(row.startDate) }} ~ {{ formatDateShort(row.endDate) }}
+              </template>
+            </el-table-column>
+            <el-table-column prop="caretaker" label="照看人" width="120" />
+            <el-table-column prop="contact" label="联系方式" width="160" />
+            <el-table-column prop="notes" label="交接备注" min-width="200" show-overflow-tooltip />
+            <el-table-column label="状态" width="100" align="center">
+              <template #default="{ row }">
+                <el-tag :type="row.status === 'completed' ? 'success' : 'info'" size="small">
+                  {{ row.status === 'completed' ? '已完成' : '已取消' }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="180" align="center">
+              <template #default="{ row }">
+                <el-button size="small" type="primary" text @click="openChecklist(row)">📋 清单</el-button>
+                <el-button size="small" type="danger" text @click="handleDelete(row)">🗑️ 删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+      </div>
+
+      <el-dialog v-model="dialogVisible" :title="isEdit ? '编辑托管' : '开启托管模式'" width="600px">
+        <el-alert
+          v-if="!isEdit"
+          title="出差前开启托管，将自动合并期间所有养护任务生成清单，方便照看人按计划执行。"
+          type="info"
+          :closable="false"
+          style="margin-bottom: 20px;"
+        />
+        <el-form ref="custodyFormRef" :model="formData" :rules="rules" label-width="110px">
+          <el-form-item label="开始日期" prop="startDate">
+            <el-date-picker v-model="formData.startDate" type="date" placeholder="选择出差开始日期" style="width: 100%;" />
+          </el-form-item>
+          <el-form-item label="结束日期" prop="endDate">
+            <el-date-picker v-model="formData.endDate" type="date" placeholder="选择出差结束日期" style="width: 100%;" />
+          </el-form-item>
+          <el-form-item label="照看人" prop="caretaker">
+            <el-input v-model="formData.caretaker" placeholder="请输入照看人姓名" />
+          </el-form-item>
+          <el-form-item label="联系方式" prop="contact">
+            <el-input v-model="formData.contact" placeholder="请输入照看人联系方式" />
+          </el-form-item>
+          <el-form-item label="交接备注">
+            <el-input v-model="formData.notes" type="textarea" :rows="4" placeholder="记录特殊养护要求、注意事项等..." />
+          </el-form-item>
+        </el-form>
+        <template #footer>
+          <el-button @click="dialogVisible = false">取消</el-button>
+          <el-button type="primary" @click="handleSubmit($refs.custodyFormRef)">{{ isEdit ? '保存' : '开启托管' }}</el-button>
+        </template>
+      </el-dialog>
+
+      <el-dialog v-model="checklistVisible" title="📋 托管养护清单" width="900px" top="5vh">
+        <div v-loading="checklistLoading">
+          <div v-if="checklistData" id="custody-checklist-print">
+            <h1 style="text-align: center; color: #2e7d32; margin-bottom: 8px; font-size: 22px;">🌱 托管养护清单</h1>
+            <div style="text-align: center; color: #666; font-size: 13px; margin-bottom: 20px;">
+              {{ formatDateShort(checklistData.custody.startDate) }} ~ {{ formatDateShort(checklistData.custody.endDate) }} | 照看人：{{ checklistData.custody.caretaker }}
+            </div>
+
+            <div class="custody-info-print">
+              <div class="custody-info-item">
+                <span class="custody-info-label">📅 托管期间：</span>
+                <span class="custody-info-value">{{ formatDateShort(checklistData.custody.startDate) }} ~ {{ formatDateShort(checklistData.custody.endDate) }}</span>
+              </div>
+              <div class="custody-info-item">
+                <span class="custody-info-label">👤 照看人：</span>
+                <span class="custody-info-value">{{ checklistData.custody.caretaker }}</span>
+              </div>
+              <div class="custody-info-item">
+                <span class="custody-info-label">📞 联系方式：</span>
+                <span class="custody-info-value">{{ checklistData.custody.contact }}</span>
+              </div>
+              <div v-if="checklistData.custody.notes" class="custody-info-item" style="grid-column: 1 / -1;">
+                <span class="custody-info-label">📝 交接备注：</span>
+                <span class="custody-info-value">{{ checklistData.custody.notes }}</span>
+              </div>
+            </div>
+
+            <div class="custody-summary-print">
+              <div class="custody-summary-item">
+                <div class="custody-summary-value">{{ checklistData.summary.days }}</div>
+                <div class="custody-summary-label">托管天数</div>
+              </div>
+              <div class="custody-summary-item">
+                <div class="custody-summary-value">{{ checklistData.summary.plantCount }}</div>
+                <div class="custody-summary-label">植物数量</div>
+              </div>
+              <div class="custody-summary-item">
+                <div class="custody-summary-value">{{ checklistData.summary.totalTasks }}</div>
+                <div class="custody-summary-label">总任务数</div>
+              </div>
+              <div class="custody-summary-item">
+                <div class="custody-summary-value" style="color: #1976d2;">{{ checklistData.summary.wateringCount }}</div>
+                <div class="custody-summary-label">浇水次数</div>
+              </div>
+              <div class="custody-summary-item">
+                <div class="custody-summary-value" style="color: #f57c00;">{{ checklistData.summary.fertilizingCount }}</div>
+                <div class="custody-summary-label">施肥次数</div>
+              </div>
+            </div>
+
+            <div v-if="checklistData.dateGroups.length === 0" class="empty-state" style="padding: 30px;">
+              <div class="empty-state-icon">📋</div>
+              <div class="empty-state-text">托管期间无需养护任务</div>
+            </div>
+
+            <div v-for="group in checklistData.dateGroups" :key="group.date" class="custody-day-group">
+              <div class="custody-day-header">
+                {{ formatDateShort(group.date) }} {{ getWeekday(group.date) }}
+                <span style="float: right; font-weight: normal; font-size: 13px;">{{ group.tasks.length }} 项任务</span>
+              </div>
+              <table class="custody-task-table">
+                <thead>
+                  <tr>
+                    <th style="width: 40px;">✓</th>
+                    <th style="width: 60px;">类型</th>
+                    <th>植物名称</th>
+                    <th>品种</th>
+                    <th>难度</th>
+                    <th>光照</th>
+                    <th>养护备注</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="task in group.tasks" :key="task.plantId + task.type + task.date">
+                    <td style="text-align: center;">☐</td>
+                    <td :class="task.type === 'watering' ? 'type-water' : 'type-fert'">
+                      {{ task.type === 'watering' ? '💧 浇水' : '🌾 施肥' }}
+                    </td>
+                    <td style="font-weight: bold;">{{ task.plantName }}</td>
+                    <td>{{ task.species }}</td>
+                    <td>
+                      <span class="difficulty-badge" :class="'difficulty-' + task.difficulty">
+                        {{ task.difficulty === 'easy' ? '简单' : task.difficulty === 'medium' ? '中等' : '困难' }}
+                      </span>
+                    </td>
+                    <td>{{ task.lightPreference === 'full' ? '全日照' : task.lightPreference === 'bright' ? '明亮散射' : task.lightPreference === 'medium' ? '半阴' : '耐阴' }}</td>
+                    <td style="color: #666; font-size: 12px;">{{ task.notes || '-' }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="custody-print-footer">
+              <div>打印时间：{{ new Date().toLocaleString('zh-CN') }}</div>
+              <div class="custody-sign-area">
+                <div class="custody-sign-item">
+                  <div>交接人签名：</div>
+                  <div class="custody-sign-line"></div>
+                </div>
+                <div class="custody-sign-item">
+                  <div>照看人签名：</div>
+                  <div class="custody-sign-line"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <template #footer>
+          <el-button @click="checklistVisible = false">关闭</el-button>
+          <el-button type="primary" @click="printChecklist">
+            <el-icon><Printer /></el-icon> 打印清单
+          </el-button>
+        </template>
+      </el-dialog>
+    </div>
+  `
+};
+
 const app = createApp(App);
 app.use(ElementPlus, { locale: ElementPlusLocaleZhCn });
 
@@ -1721,6 +2211,7 @@ app.component('plant-management', PlantManagement);
 app.component('notification-page', NotificationPage);
 app.component('photo-timeline', PhotoTimeline);
 app.component('pest-detection', PestDetection);
+app.component('custody-mode', CustodyMode);
 app.component('yearly-report', YearlyReport);
 
 app.mount('#app');
